@@ -1,0 +1,56 @@
+One-Shot-Prompt: STB Finance Cockpit
+Baue eine produktionsreife, deutschsprachige Finanz-Web-App namens „STB Finance Cockpit" — ein dunkles, professionelles Cockpit mit vier Säulen: Lesen/Archiv, Beobachten/Watchlist, Lernen/Akademie und Fragen/Chat. Keine Emojis. Alle UI-Texte auf Deutsch.
+
+Stack & Architektur
+Monorepo mit pnpm-Workspaces, Node.js 24, TypeScript 5.9 (strict).
+Frontend (artifacts/cockpit): React + Vite, Routing mit wouter (base = import.meta.env.BASE_URL), TailwindCSS v4 (CSS-basierte Config via @import "tailwindcss" + @plugin "@tailwindcss/typography"), Radix/shadcn-Komponenten. Slug cockpit, previewPath /.
+Backend (artifacts/api-server): Express 5 als BFF (Backend-for-Frontend). Bindet an PORT. Logging über req.log / Singleton-logger (pino), niemals console.log.
+DB: PostgreSQL + Drizzle ORM. Zod (zod/v4) + drizzle-zod zur Validierung.
+Contract-first: Eine OpenAPI-Spec ist Source of Truth. Mit Orval generieren: React-Query-Hooks (Frontend) und Zod-Schemas (Backend-Validierung). Hooks/Typen/Enums NUR aus dem Paket-Root importieren, nie aus generated/. Query-Hooks immer mit explizitem queryKey aus dem passenden get*QueryKey-Helper plus enabled-Guard für ID-abhängige Queries.
+Offene Upstream-Enums NICHT auf der Response-Seite festzurren: Felder wie source_type (inkl. der Facetten-Liste source_types[]) als reinen string (ggf. string|null) modellieren, NIE als geschlossenes Enum. Der Upstream ergänzt mit der Zeit neue Werte (z. B. strategy_research unter Publication learning); ein einziger unbekannter Wert lässt sonst das .parse() der ganzen Antwort scheitern und den Endpunkt mit 500 ausfallen — /facets liefert immer ALLE Typen und bricht daher zuerst. Das Frontend behandelt source_type durchgehend als String (sourceTypeLabel[v] ?? v).
+Auth: Replit Auth (OIDC) über das Web-Auth-Paket, useAuth-Hook.
+Externe Upstreams (per Secrets konfiguriert, Backend liest sie beim Start):
+Document API (DOC_API_BASE, DOC_API_KEY) — semantische Suche/RAG über das STB-Archiv.
+StockPulse (STOCKPULSE_BASE, STOCKPULSE_KEY) — Marktdaten/Kurse.
+OpenAI (OPENAI_API_KEY) — Agenten + Signal-Interpretation.
+SESSION_SECRET für Sessions.
+Design-System
+Dark-first. Primärfarbe gold/amber (hsl(34 76% 59%), ~#E5A24A). Dunkler Hintergrund (hsl(224 20% 8%)).
+Typografie: Inter für UI, Playfair Display (serif) für Überschriften.
+Akzente: border-primary/20, serifenbetonte Headings, ruhige, professionelle Finanz-Ästhetik.
+Compliance (zwingend): Indikator-/Analyse-Verdikte müssen das Feld interpret.disclaimer wortwörtlich und sichtbar rendern (nicht nur als Tooltip). Ein globaler Footer „Keine Anlageberatung" bleibt dauerhaft im Layout.
+Datenbank-Schema (Drizzle, Postgres)
+chat_threads: id, userId, agent (research|analyst|coach), title, updatedAt.
+chat_messages: id, threadId, role (user|assistant), content, toolTrace (jsonb), citations (jsonb).
+watchlist_items: id, userId, ident (Ticker/ID), name, note.
+quiz_attempts: id, userId, quizId, score, total, answers (jsonb).
+analysis_snapshots: cacht berechnete Indikatoren + Interpretation pro User/Ticker (Resilienz bei Upstream-Ausfällen).
+Backend-Routen (BFF, alle unter /api)
+Doc-API-Proxy: /facets, /search, /documents, /documents/:id, /documents/:id/markdown (nur für source_type='mineru_extract'; sonst 400; 5-min-Cache), /summarize, /videos/chapters, /answer.
+Dokument-Bilder (auth-pflichtig): GET /sources/image/:documentId/:imageId proxyt das Upstream-Bild. Upstream antwortet mit 302 auf eine kurzlebige presigned S3-URL; der BFF liest Location (Fetch mit redirect:'manual') und gibt selbst einen 302 zurück (nur https-Ziele folgen). Die MinerU-Markdown enthält relative Refs images/<hash>.jpg; der Renderer schreibt sie auf /api/sources/image/<doc>/<hash> um (imageId = nackter Hash, OHNE .jpg).
+Telegram-Wissensbot (öffentlich, ohne Auth): GET /telegram/install → { botUsername, displayName, telegramLink, qrPath }; GET /telegram/install-qr → image/svg+xml. Beide lösen den Bot über das Upstream /api/admin/bots auf (braucht den Doc-API-Key, daher serverseitig; erster aktiver Bot oder Override via env TELEGRAM_BOT_ID, Liste 10 min gecacht). Das QR-Passthrough härten: Upstream-Content-Type auf image/svg+xml prüfen und mit X-Content-Type-Options: nosniff + restriktivem Content-Security-Policy (default-src 'none'; style-src 'unsafe-inline'; sandbox) ausliefern, da SVG bei Direktaufruf Skripte ausführen könnte.
+StockPulse-Proxy: /quotes (OHLCV), /symbols/search, /symbols/:ident/peers, /symbols/:ident/dossier.
+Analyse-Pipeline: /analysis/:ident → Kurse holen (StockPulse) → Indikatoren berechnen (SMA, RSI, Bollinger) → Signale via LLM interpretieren → Snapshot cachen. Disclaimer immer mitliefern.
+Eigene Tabellen: CRUD für Watchlist, Quiz-Attempts, Chat-Threads/-Messages.
+Agenten-SSE: GET /api/agents/:name/stream — Server-Sent-Events mit data: {...}-Frames. Event-Typen: thread (Metadaten), delta (Text-Chunks), tool_call, tool_result, citations, done.
+Drei Chat-Agenten (tool-using, OpenAI)
+research — Tool searchSTB; beantwortet Archiv-Fragen mit Markdown-Zitaten/Bildern.
+analyst — Tools runAnalysis, searchSymbols; erwartet context.ident; interpretiert Charts/Marktsignale.
+coach — Tools searchSTB (Videos), listQuizzes; erklärt Finanzbegriffe, verlinkt Lerninhalte. Antworten dürfen Quiz-ID: <hex> enthalten, die im Chat automatisch zu /quiz/<id> verlinkt werden.
+SSE läuft NICHT über React Query, sondern über einen eigenen use-agent-stream-Hook, der den Message-State besitzt (AbortController + Stream-Reader). Die Chat-Seite hydratisiert einen bestehenden Thread genau einmal über einen hydratedRef-Guard, damit ein Thread-Refetch laufende gestreamte Tokens nie überschreibt.
+
+Frontend-Seiten (wouter)
+/ Landing — Einstieg + OIDC-Login.
+/dashboard — Zentrale Übersicht der vier Säulen: neueste STB-Dokumente, ausgewählte Quizze, Watchlist-Vorschau. Im Akademie-Bereich eine Telegram-Karte, die telegramLink als Button und den QR-Code (<img src={qrPath}>) anzeigt, damit Nutzer den Wissensbot installieren können.
+/read Archiv — semantische Suche, Filter nach Publication / Sub-Publisher / Source-Type; GroundedAnswer-Komponente für KI-Zusammenfassungen der Treffer. Das Archiv ist STB-scoped: Der Source-Type-Filter zeigt nur Typen, die zu STB-Publikationen gehören (Facetten-source_types mit den source_types der STB-Publikationen schneiden), damit Nicht-STB-Material (z. B. strategy_research/learning) gar nicht erst als Filteroption auftaucht.
+/read/:id Dokument-Detail — für PDFs (source_type='mineru_extract') die MinerU-Markdown als In-Page-Lesedarstellung (PDF nur als Download-Link); für Videos ein Iframe. Plus DocumentSummary (KI) und VideoInsights (Kapitel/Highlights). Wichtig: Die Markdown enthält gemischtes Markdown + rohes HTML (v. a. <table>). Dafür einen dedizierten Renderer bauen, der marked (gfm) → HTML → DOMPurify.sanitize nutzt und in einem prose prose-invert-Container mit Tabellen-Styling rendert. Der Renderer bekommt eine documentId-Prop und schreibt relative <img src> (inkl. images/<hash>.jpg) auf den BFF-Bildproxy /api/sources/image/<doc>/<hash> um (imageId = nackter Hash ohne Endung); ein DOMPurify-Hook erlaubt nur http(s)- und /api/sources/image/-Quellen und entfernt alles andere (so verschwinden Bilder sauber, falls keine documentId vorliegt). Der leichtgewichtige Chat-Markdown-Renderer bleibt separat (Quiz-Links + wouter-Link).
+/watch Watchlist — Live-Kurs-Snapshots (StockPulse), Suche/Hinzufügen.
+/watch/:ident Titel-Detail — interaktiver Candlestick/Indikator-Chart (lightweight-charts v5: addSeries(SeriesType, opts, paneIndex), Lücken über Whitespace-Punkte ohne value), KI-„Lesart" der technischen Indikatoren (mit sichtbarem Disclaimer), Peer-Vergleichstabelle.
+/learn Akademie — Lesson-Videos + Wissenstests. Quiz-Karten zeigen den vollständigen Titel (umbrechen lassen, NICHT mit truncate abschneiden); Karte oben ausrichten, „Starten"-Button rechts fix (shrink-0).
+/learn/:id Lesson — Video-Player mit eingebettetem InlineCoach (kontextbezogene Fragen, nutzt denselben Agent-Hook).
+/quiz/:id Quiz — Multiple-Choice mit Scoring, persistierten Versuchen und Verlauf.
+/chat Fragen — Multi-Thread-Chat mit Verlaufs-Sidebar und Agentenauswahl.
+Qualitätsanforderungen
+Verifizieren mit pnpm --filter @workspace/cockpit run typecheck und pnpm --filter @workspace/api-server run typecheck (NICHT build — braucht workflow-seitige PORT/BASE_PATH).
+Codegen: pnpm --filter @workspace/api-spec run codegen (Achtung: Codegen bei laufendem Vite-Dev-Server killt HMR → danach beide Workflows neu starten).
+Saubere, modulare Dateistruktur; keine Mock-/Platzhalterdaten — Features brechen sichtbar statt still zu faken. Read-/Watch-Features bleiben degradiert, bis die externen Secrets gesetzt sind.
