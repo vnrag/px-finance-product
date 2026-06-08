@@ -26,6 +26,8 @@ watchlist_items: id, userId, ident (Ticker/ID), name, note.
 quiz_attempts: id, userId, quizId, score, total, answers (jsonb).
 analysis_snapshots: cacht berechnete Indikatoren + Interpretation pro User/Ticker (Resilienz bei Upstream-Ausfällen).
 Backend-Routen (BFF, alle unter /api)
+
+API SPECS: https://zorygyhs54.execute-api.eu-central-1.amazonaws.com/docs
 Doc-API-Proxy: /facets, /search, /documents, /documents/:id, /documents/:id/markdown (nur für source_type='mineru_extract'; sonst 400; 5-min-Cache), /summarize, /videos/chapters, /answer.
 Dokument-Bilder (auth-pflichtig): GET /sources/image/:documentId/:imageId proxyt das Upstream-Bild. Upstream antwortet mit 302 auf eine kurzlebige presigned S3-URL; der BFF liest Location (Fetch mit redirect:'manual') und gibt selbst einen 302 zurück (nur https-Ziele folgen). Die MinerU-Markdown enthält relative Refs images/<hash>.jpg; der Renderer schreibt sie auf /api/sources/image/<doc>/<hash> um (imageId = nackter Hash, OHNE .jpg).
 Telegram-Wissensbot (öffentlich, ohne Auth): GET /telegram/install → { botUsername, displayName, telegramLink, qrPath }; GET /telegram/install-qr → image/svg+xml. Beide lösen den Bot über das Upstream /api/admin/bots auf (braucht den Doc-API-Key, daher serverseitig; erster aktiver Bot oder Override via env TELEGRAM_BOT_ID, Liste 10 min gecacht). Das QR-Passthrough härten: Upstream-Content-Type auf image/svg+xml prüfen und mit X-Content-Type-Options: nosniff + restriktivem Content-Security-Policy (default-src 'none'; style-src 'unsafe-inline'; sandbox) ausliefern, da SVG bei Direktaufruf Skripte ausführen könnte.
@@ -54,3 +56,5 @@ Qualitätsanforderungen
 Verifizieren mit pnpm --filter @workspace/cockpit run typecheck und pnpm --filter @workspace/api-server run typecheck (NICHT build — braucht workflow-seitige PORT/BASE_PATH).
 Codegen: pnpm --filter @workspace/api-spec run codegen (Achtung: Codegen bei laufendem Vite-Dev-Server killt HMR → danach beide Workflows neu starten).
 Saubere, modulare Dateistruktur; keine Mock-/Platzhalterdaten — Features brechen sichtbar statt still zu faken. Read-/Watch-Features bleiben degradiert, bis die externen Secrets gesetzt sind.
+
+
